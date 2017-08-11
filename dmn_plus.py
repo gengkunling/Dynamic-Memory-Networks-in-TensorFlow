@@ -12,7 +12,7 @@ from attention_gru_cell import AttentionGRUCell
 
 from tensorflow.contrib.cudnn_rnn.python.ops import cudnn_rnn_ops
 
-import babi_input
+import contract_input
 
 class Config(object):
     """Holds model hyperparams and data information."""
@@ -83,9 +83,16 @@ class DMN_PLUS(object):
     def load_data(self, debug=False):
         """Loads train/valid/test data and sentence encoding"""
         if self.config.train_mode:
-            self.train, self.valid, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len, self.num_supporting_facts, self.vocab_size = babi_input.load_babi(self.config, split_sentences=True)
+            # self.train, self.valid, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len, self.num_supporting_facts, self.vocab_size = babi_input.load_babi(self.config, split_sentences=True)
+            self.train, self.valid, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len, \
+                self.num_supporting_facts, self.vocab_size = contract_input.load_data(self.config, split_sentences=True)
+
         else:
-            self.test, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len, self.num_supporting_facts, self.vocab_size = babi_input.load_babi(self.config, split_sentences=True)
+            # self.test, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len, self.num_supporting_facts, self.vocab_size = babi_input.load_babi(self.config, split_sentences=True)
+            self.test, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len,\
+                self.num_supporting_facts, self.vocab_size = contract_input.load_data(
+                self.config, split_sentences=True)
+
         self.encoding = _position_encoding(self.max_sen_len, self.config.embed_size)
 
     def add_placeholders(self):
