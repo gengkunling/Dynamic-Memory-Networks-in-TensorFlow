@@ -9,10 +9,12 @@ from copy import deepcopy
 
 import tensorflow as tf
 from attention_gru_cell import AttentionGRUCell
+from answer_gru_cell import AnswerCell
 
 from tensorflow.contrib.cudnn_rnn.python.ops import cudnn_rnn_ops
 
 import contract_input
+from tensorflow.python.ops import array_ops
 
 class Config(object):
     """Holds model hyperparams and data information."""
@@ -21,15 +23,17 @@ class Config(object):
     embed_size = 80
     hidden_size = 80
 
-    max_epochs = 256
+    max_epochs = 200
     early_stopping = 20
 
-    dropout = 0.9
-    lr = 0.001
+    dropout = 0.5
+    lr = 0.001 * 10
     l2 = 0.001
 
     cap_grads = False
+    # gkl
     max_grad_val = 10
+    #max_grad_val = 12
     noisy_grads = False
 
     word2vec_init = False
@@ -47,7 +51,7 @@ class Config(object):
     num_attention_features = 4
 
     max_allowed_inputs = 130
-    num_train = 9000
+    # num_train = 900
 
     floatX = np.float32
 
@@ -84,12 +88,12 @@ class DMN_PLUS(object):
         """Loads train/valid/test data and sentence encoding"""
         if self.config.train_mode:
             # self.train, self.valid, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len, self.num_supporting_facts, self.vocab_size = babi_input.load_babi(self.config, split_sentences=True)
-            self.train, self.valid, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len, \
+            self.train, self.valid, self.word_embedding, self.max_q_len, self.max_a_len, self.max_input_len, self.max_sen_len, \
                 self.num_supporting_facts, self.vocab_size = contract_input.load_data(self.config, split_sentences=True)
 
         else:
             # self.test, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len, self.num_supporting_facts, self.vocab_size = babi_input.load_babi(self.config, split_sentences=True)
-            self.test, self.word_embedding, self.max_q_len, self.max_input_len, self.max_sen_len,\
+            self.test, self.word_embedding, self.max_q_len, self.max_a_len, self.max_input_len, self.max_sen_len,\
                 self.num_supporting_facts, self.vocab_size = contract_input.load_data(
                 self.config, split_sentences=True)
 
@@ -101,9 +105,20 @@ class DMN_PLUS(object):
         self.input_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size, self.max_input_len, self.max_sen_len))
 
         self.question_len_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size,))
+        self.answer_len_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size,))
         self.input_len_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size,))
 
-        self.answer_placeholder = tf.placeholder(tf.int64, shape=(self.config.batch_size,))
+        self.answer_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size, self.max_a_len))
+
+        print('answer place holder size')
+        print(self.answer_placeholder.get_shape())
+        print('max a len')
+        print(self.max_a_len)
+
+        print('question place holder size')
+        print(self.question_placeholder.get_shape())
+        print('max q len')
+        print(self.max_q_len)
 
         self.rel_label_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size, self.num_supporting_facts))
 
@@ -116,6 +131,12 @@ class DMN_PLUS(object):
       
     def add_loss_op(self, output):
         """Calculate loss"""
+
+        print('output size')
+        print(output.get_shape())
+
+        # output = output
+        # embeddings = tf.Variable(self.word_embedding.astype(np.float32), name="Embedding")
         # optional strong supervision of attention with supporting facts
         gate_loss = 0
         if self.config.strong_supervision:
@@ -123,7 +144,22 @@ class DMN_PLUS(object):
                 labels = tf.gather(tf.transpose(self.rel_label_placeholder), 0)
                 gate_loss += tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=att, labels=labels))
 
-        loss = self.config.beta*tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=output, labels=self.answer_placeholder)) + gate_loss
+        # answers = tf.nn.embedding_lookup(embeddings, self.answer_placeholder)
+        answers = self.answer_placeholder
+        print(answers)
+        #answers = tf.reshape(answers, [self.config.batch_size, -1])
+        # loss = self.config.beta*tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=output, labels=answers)) + gate_loss
+        # loss = self.config.beta * tf.reduce_sum(tf.contrib.keras.backend.categorical_crossentropy(output=output, target=answers, from_logits=True)) + gate_loss
+
+        # self defined loss funciton
+        # sum the loss for each word
+        loss = gate_loss
+        for i in range(output.get_shape()[1]):
+            s_output = tf.squeeze(output[:, i, :])
+            s_answer = tf.squeeze(answers[:,i])
+            loss += self.config.beta * tf.reduce_sum(
+                tf.nn.sparse_softmax_cross_entropy_with_logits(logits=s_output, labels=s_answer))
+
 
         # add l2 regularization for all variables except biases
         for v in tf.trainable_variables():
@@ -153,13 +189,20 @@ class DMN_PLUS(object):
         """Get question vectors via embedding and GRU"""
         questions = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
 
+        #debug
+        print('questions')
+        print(questions.get_shape())
+
         gru_cell = tf.contrib.rnn.GRUCell(self.config.hidden_size)
         _, q_vec = tf.nn.dynamic_rnn(gru_cell,
                 questions,
                 dtype=np.float32,
                 sequence_length=self.question_len_placeholder
         )
+        # the output of the question module is the final state
 
+        print('q_vec size:')
+        print(q_vec.get_shape())
         return q_vec
 
     def get_input_representation(self, embeddings):
@@ -184,7 +227,13 @@ class DMN_PLUS(object):
         fact_vecs = tf.reduce_sum(tf.stack(outputs), axis=0)
 
         # apply dropout
+        # q: is dropout necessary?
         fact_vecs = tf.nn.dropout(fact_vecs, self.dropout_placeholder)
+
+        print('inputs size')
+        print(inputs.get_shape())
+        print('input vec')
+        print(fact_vecs.get_shape())
 
         return fact_vecs
 
@@ -200,13 +249,13 @@ class DMN_PLUS(object):
             feature_vec = tf.concat(features, 1)
 
             attention = tf.contrib.layers.fully_connected(feature_vec,
-                            self.config.embed_size,
+                            self.config.embed_size, # no. of output neurons
                             activation_fn=tf.nn.tanh,
                             reuse=reuse, scope="fc1")
         
             attention = tf.contrib.layers.fully_connected(attention,
-                            1,
-                            activation_fn=None,
+                            1, # no. of output neurons
+                            activation_fn=None, # sigmoidal in the paper?
                             reuse=reuse, scope="fc2")
             
         return attention
@@ -237,16 +286,45 @@ class DMN_PLUS(object):
 
         return episode
 
-    def add_answer_module(self, rnn_output, q_vec):
-        """Linear softmax answer module"""
 
-        rnn_output = tf.nn.dropout(rnn_output, self.dropout_placeholder)
+    # GKL update the answer module for output with multiple words
+    def add_answer_module(self, last_mem, q_vec):
+        """reccurent answer module"""
 
-        output = tf.layers.dense(tf.concat([rnn_output, q_vec], 1),
-                self.vocab_size,
-                activation=None)
+
+        # replicate the q_vec  with no. of time-stamps
+        q_vec = [q_vec for _ in range(self.max_a_len)]
+        q_vec = tf.stack(q_vec, 1)
+        # q_vec = tf.expand_dims(q_vec, 0)
+
+        print('q_vec stack size')
+        print(q_vec.get_shape())
+
+        print('last_mem size')
+        print(last_mem.get_shape)
+
+
+
+        # initial_state = tf.concat([last_mem, tf.zeros_like(last_mem)], 1)
+        append_zeros = tf.zeros([self.config.batch_size, self.vocab_size])
+        # initial_state = tf.concat([last_mem, append_zeros], 1)
+        initial_state = (last_mem, append_zeros)
+
+        #print('init state size')
+        #print(initial_state.get_shape())
+
+        answer_cell = AnswerCell(num_units=self.config.hidden_size, vocab_size=self.vocab_size)
+        output, _ = tf.nn.dynamic_rnn(answer_cell,
+                                     q_vec,
+                                     dtype=np.float32,
+                                     sequence_length=self.answer_len_placeholder,
+                                     initial_state=initial_state
+                                     )
 
         return output
+
+
+
 
     def inference(self):
         """Performs inference on the DMN model"""
@@ -285,11 +363,16 @@ class DMN_PLUS(object):
                             self.config.hidden_size,
                             activation=tf.nn.relu)
 
-            output = prev_memory
+            last_mem = prev_memory
 
         # pass memory module output through linear answer module
+        #debug: the size of the tensors are not match
+        print("last_mem size:")
+        print(last_mem.get_shape())
+        print('q_vec size:')
+        print(q_vec.get_shape())
         with tf.variable_scope("answer", initializer=tf.contrib.layers.xavier_initializer()):
-            output = self.add_answer_module(output, q_vec)
+            output = self.add_answer_module(last_mem, q_vec)
 
         return output
 
@@ -306,14 +389,15 @@ class DMN_PLUS(object):
         
         # shuffle data
         p = np.random.permutation(len(data[0]))
-        qp, ip, ql, il, im, a, r = data
-        qp, ip, ql, il, im, a, r = qp[p], ip[p], ql[p], il[p], im[p], a[p], r[p] 
+        qp, ip, ql, al, il, im, a, r = data
+        qp, ip, ql, al, il, im, a, r = qp[p], ip[p], ql[p], al[p], il[p], im[p], a[p], r[p]
 
         for step in range(total_steps):
             index = range(step*config.batch_size,(step+1)*config.batch_size)
             feed = {self.question_placeholder: qp[index],
                   self.input_placeholder: ip[index],
                   self.question_len_placeholder: ql[index],
+                  self.answer_len_placeholder: al[index],
                   self.input_len_placeholder: il[index],
                   self.answer_placeholder: a[index],
                   self.rel_label_placeholder: r[index],
@@ -324,7 +408,9 @@ class DMN_PLUS(object):
             if train_writer is not None:
                 train_writer.add_summary(summary, num_epoch*total_steps + step)
 
-            answers = a[step*config.batch_size:(step+1)*config.batch_size]
+            # answers = a[step*config.batch_size:(step+1)*config.batch_size]
+            answers = a[index]
+
             accuracy += np.sum(pred == answers)/float(len(answers))
 
 
@@ -337,7 +423,6 @@ class DMN_PLUS(object):
 
         if verbose:
             sys.stdout.write('\r')
-
         return np.mean(total_loss), accuracy/float(total_steps)
 
 

@@ -101,7 +101,7 @@ for run in range(num_runs):
 
             # anneal
             if train_loss>prev_epoch_loss*model.config.anneal_threshold:
-                model.config.lr/=model.config.anneal_by
+                model.config.lr /= model.config.anneal_by
                 print('annealed lr to %f'%model.config.lr)
 
             prev_epoch_loss = train_loss

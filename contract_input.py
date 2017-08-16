@@ -156,7 +156,8 @@ def process_input(data_raw, floatX, word2vec, vocab, ivocab, embed_size, split_s
 
 
 
-        # NOTE: here we assume the answer is one word! 
+        # NOTE: here we assume the answer is one word!
+        # Update by Kunling, need to support multiple words
 
         if not split_sentences:
             if input_mask_mode == 'word':
@@ -260,8 +261,8 @@ def load_data(config, split_sentences=False):
         max_mask_len = np.max(mask_lens)
 
     q_lens = get_lens(questions)
-
     max_q_len = np.max(q_lens)
+
     max_input_len = min(np.max(input_lens), config.max_allowed_inputs)
 
     #pad out arrays to max
@@ -280,20 +281,27 @@ def load_data(config, split_sentences=False):
     answers = pad_inputs(answers, a_lens, max_a_len)
 
 
+
     rel_labels = np.zeros((len(rel_labels), len(rel_labels[0])))
 
     for i, tt in enumerate(rel_labels):
         rel_labels[i] = np.array(tt, dtype=int)
 
     if config.train_mode:
-        train = questions[:config.num_train], inputs[:config.num_train], q_lens[:config.num_train], input_lens[:config.num_train], input_masks[:config.num_train], answers[:config.num_train], rel_labels[:config.num_train] 
+        num_train = int(len(questions) * 0.8)
+        print('num train')
+        print(num_train)
+        train = questions[:num_train], inputs[:num_train], q_lens[:num_train], a_lens[:num_train], \
+                input_lens[:num_train], input_masks[:num_train], answers[:num_train], rel_labels[:num_train]
 
-        valid = questions[config.num_train:], inputs[config.num_train:], q_lens[config.num_train:], input_lens[config.num_train:], input_masks[config.num_train:], answers[config.num_train:], rel_labels[config.num_train:] 
-        return train, valid, word_embedding, max_q_len, max_input_len, max_mask_len, rel_labels.shape[1], len(vocab)
+        valid = questions[num_train:], inputs[num_train:], q_lens[num_train:], a_lens[:num_train], \
+                input_lens[num_train:], input_masks[num_train:], answers[num_train:], rel_labels[num_train:]
+
+        return train, valid, word_embedding, max_q_len, max_a_len, max_input_len, max_mask_len, rel_labels.shape[1], len(vocab)
 
     else:
-        test = questions, inputs, q_lens, input_lens, input_masks, answers, rel_labels
-        return test, word_embedding, max_q_len, max_input_len, max_mask_len, rel_labels.shape[1], len(vocab)
+        test = questions, inputs, q_lens, a_lens, input_lens, input_masks, answers, rel_labels
+        return test, word_embedding, max_q_len, max_a_len, max_input_len, max_mask_len, rel_labels.shape[1], len(vocab)
 
 
     
